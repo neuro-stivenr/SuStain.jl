@@ -3,10 +3,10 @@
 module SuStain
 
 using Random, Distributions, QuadGK
-using Plots, StatsPlots
 using CSV, DataFrames
 using Base.Threads
 using ProgressMeter
+import YAML
 
 
 # the piecewise linear function evaluation
@@ -219,5 +219,43 @@ function coord_to_cutoffs(coord::Tuple{Float64, Float64, Float64})
     value_3 = value_2 + leftover_2 * coord[3]
     (value_1, value_2, value_3)
 end
+
+function main(datapath::String, variables::String, N_stages::Int64, N_runs::Int64, outpath::String)
+    @info "Reading in data... Path: " datapath
+    df_data = CSV.read(datapath, DataFrame);
+    regions = String.(split(variables, ","))
+    @info "Regions: " regions
+    df_reg = df_data[:,regions];
+    @info "Nulling out negative data values."
+    df_reg = df_reg .* (df_reg .>= 0)
+    @info "Generating z-score thresholds based on qunatiles."
+    dict_z = SuStain.gen_z_dict(df_reg, regions)
+    @info "Generating z-score maxima from the data."
+    dict_zmax = SuStain.gen_zmax_dict(df_reg, regions)
+    @info "Running $(N_runs) SuStain models."
+    vec_loglik, vec_tvec = SuStain.run_parallel_models(N_runs, regions, df_reg, N_stages, dict_z, dict_zmax);
+    @info "Identifying maximum likelihood model."
+    ml_idx = argmax(vec_loglik)
+    ml = vec_loglik[ml_idx]
+    @info "Maximal log-likelihood: " ml
+    opt_tvec = vec_tvec[ml_idx]
+    output = Dict(
+        "z_thresh" => dict_z,
+        "z_max" => dict_zmax,
+        "N_stages" => N_stages,
+        "model_ll" => vec_loglik,
+        "model_params" => vec_tvec,
+        "opt_model_params" => opt_tvec,
+        "opt_model_ll" => ml,
+        "regions" => regions
+    )
+    @info "Writing output to: " outpath
+    YAML.write_file(outpath, output)
+end
+
+if !isinteractive()
+    main(ARGS[1], ARGS[2], parse(Int64, ARGS[3]), parse(Int64, ARGS[4]), ARGS[5])
+end
+
 
 end
